@@ -55,6 +55,9 @@ typedef struct {
     long token_len;
     int switch_flag;
     int isp;
+
+    char * input;
+    long input_i;
 } Meta2Vm;
 
 void fatal_error(const char * fmt, ...) {
@@ -122,11 +125,26 @@ void load_line(char * line, Meta2Vm * out) {
         line = skip_alpha_digit(line);
         line = skip_whitespace(line);
         {
+            /*Remove trailing whitespace*/
             const long len = strlen(line);
             if(len > 0 && line[len - 1] == ' ') {
                 line[strlen(line) - 1] = 0;
             }
         }
+        {
+            /*Remove quotes around string arguments*/
+            const long len = strlen(line);
+            if(len > 0 && line[len - 1] == '\'') {
+                line[len - 1] = 0;
+            }
+            if(line[0] == '\'') {
+                ++line;
+            }
+
+        }
+        
+
+
         memcpy(op.str, line, strlen(line));
 
         out->opcodes[out->opcode_len] = op;
@@ -146,6 +164,92 @@ void load_vm(char * input, Meta2Vm * out) {
     for(;line != NULL; line = strtok(NULL, "\n")) {
         load_line(line, out); 
     }
+}
+
+/*vm utilities*/
+void vm_skip_whitespace(Meta2Vm* self) {
+    for(;isspace(self->input[self->input_i]); ++self->input_i);
+}
+
+char * vm_input(Meta2Vm* self) {
+    return &self->input[self->input_i];
+}
+
+void vm_advance(Meta2Vm * self, long i) {
+    self->input_i += i;
+}
+
+/*opcode implementations*/
+void vm_tst(Meta2Vm* self, char * str) {
+    const long len = strlen(str);
+    assert(str && "tst string is NULL");
+    assert(strcspn(str, "'") && "tst string must not contain single quotes");
+    vm_skip_whitespace(self);
+    if(strncmp(str, vm_input(self), len) == 0) {
+        self->switch_flag = 1;
+        vm_advance(self, len);
+    } else {
+        self->switch_flag = 0;
+    }
+}
+
+void vm_id(Meta2Vm * self) {
+    int i = 0;
+    vm_skip_whitespace(self);
+    if(!isalpha(vm_input(self)[0])) {
+        self->switch_flag = 0;
+        return;
+    }
+    for(i = 0; self->input[self->input_i + i] != 0; ++i) {
+        char ch = self->input[self->input_i + i];
+        if(isspace(ch)) {
+            self->switch_flag = 1;
+            memcpy(self->token, vm_input(self), i - 1); 
+            self->token[i] = 0;
+            self->input_i += i - 1;
+        } else if(!(isalpha(ch) || isdigit(ch))) {
+            self->switch_flag = 0; 
+        }
+    }
+}
+
+
+void vm_num(Meta2Vm * self) {
+    int i = 0;
+    vm_skip_whitespace(self);
+    for(i = 0; self->input[self->input_i + i] != 0; ++i) {
+        char ch = self->input[self->input_i + i];
+        if(isspace(ch)) {
+            self->switch_flag = 1;
+            memcpy(self->token, vm_input(self), i - 1); 
+            self->token[i] = 0;
+            self->input_i += i - 1;
+        } else if(!isdigit(ch)) {
+            self->switch_flag = 0; 
+        }
+    }
+}
+
+void vm_sr(Meta2Vm * self) {
+
+    /*TODO finish*/
+    int i = 0;
+    vm_skip_whitespace(self);
+    for(i = 0; self->input[self->input_i + i] != 0; ++i) {
+        char ch = self->input[self->input_i + i];
+        if(isspace(ch)) {
+            self->switch_flag = 1;
+            memcpy(self->token, vm_input(self), i - 1); 
+            self->token[i] = 0;
+            self->input_i += i - 1;
+        } else if(!(isalpha(ch) || isdigit(ch))) {
+            self->switch_flag = 0; 
+        }
+    }
+}
+
+void run_vm(Meta2Vm* out) {
+    
 }
 
 int main(int argc, char** argv) {
