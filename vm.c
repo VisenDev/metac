@@ -6,7 +6,7 @@
 #include <string.h>
 
 #define str_cap 16
-#define vm_cap 128
+#define vm_cap 256
 
 typedef struct {
     enum {
@@ -91,7 +91,7 @@ char * skip_alpha_digit(char * str) {
 
 void load_line(char * line, Meta2Vm * out) {
     assert(line && "Line is NULL");
-    if(line[0] == ' ') {
+    if(line[0] == ' ' || line[0] == '\t') {
         Opcode op = {0};
         /*opcode*/
         line = skip_whitespace(line);
@@ -121,13 +121,19 @@ void load_line(char * line, Meta2Vm * out) {
 
         line = skip_alpha_digit(line);
         line = skip_whitespace(line);
-        memcpy(op.str, line, strcspn(line, "\n"));
+        {
+            const long len = strlen(line);
+            if(len > 0 && line[len - 1] == ' ') {
+                line[strlen(line) - 1] = 0;
+            }
+        }
+        memcpy(op.str, line, strlen(line));
 
         out->opcodes[out->opcode_len] = op;
         ++out->opcode_len;
     } else {
         /*label*/
-        memcpy(out->labels[out->labels_len].str, line, strcspn(line, " \n"));
+        memcpy(out->labels[out->labels_len].str, line, strlen(line));
         out->labels[out->labels_len].isp = out->opcode_len;
         ++out->labels_len;
     }
@@ -156,6 +162,7 @@ int main(int argc, char** argv) {
 
         i = 100;
         i = 1002;
+        (void)i;
 
 
     }
