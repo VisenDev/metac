@@ -58,8 +58,16 @@ typedef struct {
 
     char * input;
     long input_i;
+    long input_len;
 } Meta2Vm;
 
+#if defined(__GNUC__) || defined(__clang__)
+#define NORETURN __attribute__((noreturn))
+#else
+#define NORETURN
+#endif
+
+NORETURN
 void fatal_error(const char * fmt, ...) {
     fprintf(stderr, "Error: ");
     va_list args;
@@ -142,8 +150,6 @@ void load_line(char * line, Meta2Vm * out) {
             }
 
         }
-        
-
 
         memcpy(op.str, line, strlen(line));
 
@@ -167,90 +173,208 @@ void load_vm(char * input, Meta2Vm * out) {
 }
 
 /*vm utilities*/
-void vm_skip_whitespace(Meta2Vm* self) {
-    for(;isspace(self->input[self->input_i]); ++self->input_i);
-}
 
 char * vm_input(Meta2Vm* self) {
+    assert(self);
+    assert(self->input_i >= 0);
+    assert(self->input_i <= self->input_len);
     return &self->input[self->input_i];
 }
 
+void vm_skip_whitespace(Meta2Vm* self) {
+    assert(self);
+    for(;isspace(self->input[self->input_i]); ++self->input_i);
+    assert(!isspace(vm_input(self)[0]) && "skip whitespace failed");
+}
+
 void vm_advance(Meta2Vm * self, long i) {
+    assert(self);
+    assert(i > 0);
+    assert(self->input_i + i < self->input_len && "Reached end of input");
     self->input_i += i;
 }
 
+char vm_getch(Meta2Vm * self) {
+    const char ch = vm_input(self)[0];
+
+    if(ch == 0) {
+        return 0;
+    } else {
+        vm_advance(self, 1);
+        return ch;
+    }
+}
+
+char vm_peekch(Meta2Vm * self) {
+    assert(self);
+    return vm_input(self)[0];
+}
+
+Label vm_lookup_label(Meta2Vm * self, char * name) {
+    int i = 0;
+    assert(name);
+    assert(self);
+    for(i = 0; i < self->labels_len; ++i) {
+        const Label l = self->labels[i];
+        if(strncmp(l.str, name, str_cap) == 0) {
+            return l;
+        }
+    }
+    fatal_error("Undefined label name \"%s\"", name);
+}
+
+
 /*opcode implementations*/
 void vm_tst(Meta2Vm* self, char * str) {
-    const long len = strlen(str);
+    assert(self);
     assert(str && "tst string is NULL");
-    assert(strcspn(str, "'") && "tst string must not contain single quotes");
-    vm_skip_whitespace(self);
-    if(strncmp(str, vm_input(self), len) == 0) {
-        self->switch_flag = 1;
-        vm_advance(self, len);
-    } else {
-        self->switch_flag = 0;
+    assert(strlen(str) > 0 && "empty string given as arg");
+    assert(strcspn(str, "'") == strlen(str) && "tst string must not contain single quotes");
+    {
+        const long len = strlen(str);
+        vm_skip_whitespace(self);
+        if(strncmp(str, vm_input(self), len) == 0) {
+            self->switch_flag = 1;
+            vm_advance(self, len);
+        } else {
+            self->switch_flag = 0;
+        }
     }
 }
 
 void vm_id(Meta2Vm * self) {
-    int i = 0;
+    assert(self);
     vm_skip_whitespace(self);
-    if(!isalpha(vm_input(self)[0])) {
+    if(!isalpha(vm_peekch(self))) {
         self->switch_flag = 0;
         return;
-    }
-    for(i = 0; self->input[self->input_i + i] != 0; ++i) {
-        char ch = self->input[self->input_i + i];
-        if(isspace(ch)) {
-            self->switch_flag = 1;
-            memcpy(self->token, vm_input(self), i - 1); 
-            self->token[i] = 0;
-            self->input_i += i - 1;
-        } else if(!(isalpha(ch) || isdigit(ch))) {
-            self->switch_flag = 0; 
+    } else {
+        int i = 0;
+        self->switch_flag = 1;
+
+        for(;isalpha(vm_peekch(self)) || isdigit(vm_peekch(self)); ++i) {
+            assert(i + 1 < (long)sizeof(self->token));
+            self->token[i] = vm_getch(self);
+            self->token[i + 1] = 0;
         }
     }
 }
 
 
 void vm_num(Meta2Vm * self) {
-    int i = 0;
+    assert(self);
     vm_skip_whitespace(self);
-    for(i = 0; self->input[self->input_i + i] != 0; ++i) {
-        char ch = self->input[self->input_i + i];
-        if(isspace(ch)) {
-            self->switch_flag = 1;
-            memcpy(self->token, vm_input(self), i - 1); 
-            self->token[i] = 0;
-            self->input_i += i - 1;
-        } else if(!isdigit(ch)) {
-            self->switch_flag = 0; 
+    if(!isdigit(vm_peekch(self))) {
+        self->switch_flag = 0;
+        return;
+    } else {
+        int i = 0;
+        self->switch_flag = 1;
+
+        for(;isdigit(vm_peekch(self)); ++i) {
+            assert(i + 1 < (long)sizeof(self->token));
+            self->token[i] = vm_getch(self);
+            self->token[i + 1] = 0;
         }
     }
 }
 
 void vm_sr(Meta2Vm * self) {
-
-    /*TODO finish*/
-    int i = 0;
+    assert(self);
     vm_skip_whitespace(self);
-    for(i = 0; self->input[self->input_i + i] != 0; ++i) {
-        char ch = self->input[self->input_i + i];
-        if(isspace(ch)) {
-            self->switch_flag = 1;
-            memcpy(self->token, vm_input(self), i - 1); 
-            self->token[i] = 0;
-            self->input_i += i - 1;
-        } else if(!(isalpha(ch) || isdigit(ch))) {
+    {
+        if(vm_peekch(self) != '\'') {
             self->switch_flag = 0; 
+            return;
+        } else {
+            int i = 0;
+            self->switch_flag = 1; 
+            self->token[i] = vm_getch(self);
+            self->token[i + 1] = 0;
+            ++i;
+
+            for(;vm_peekch(self) != '\'' && vm_peekch(self) != 0; ++i) {
+                assert(i + 1 < (long)sizeof(self->token));
+                self->token[i] = vm_getch(self);
+                self->token[i + 1] = 0;
+            }
+
+            if(vm_peekch(self) == 0) {
+                fatal_error("Unexpected end of input");
+            }
+
+            assert(vm_peekch(self) == '\'');
+            assert(i + 1 < (long)sizeof(self->token));
+            self->token[i] = vm_getch(self);
+            self->token[i + 1] = 0;
         }
     }
 }
 
-void run_vm(Meta2Vm* out) {
-    
+#define ARRAY_LEN(arr) (long)(sizeof(arr) / sizeof(arr[0]))
+
+void vm_cll(Meta2Vm* self, char * subroutine_name) {
+    const Label l = vm_lookup_label(self, subroutine_name);
+    if(self->stack_len >= ARRAY_LEN(self->stack)) {
+        fatal_error("Stack overflow");
+    }
+    self->stack[self->stack_len].return_address = self->isp;
+    memset(self->stack[self->stack_len].label1, 0, str_cap);
+    memset(self->stack[self->stack_len].label2, 0, str_cap);
+    self->stack_len += 1;
+    self->isp = l.isp;
 }
+
+
+void vm_r(Meta2Vm * self) {
+    assert(self);
+    if(self->stack_len <= 0) {
+        fatal_error("Stack underflow");
+    } else {
+        const StackCell cell = self->stack[self->stack_len - 1];
+        self->stack_len -= 1;
+        self->isp = cell.return_address;
+    }
+}
+
+void vm_set(Meta2Vm * self) {
+    assert(self);
+    self->switch_flag = 1;
+}
+
+void vm_b(Meta2Vm * self, char * label) {
+    const Label l = vm_lookup_label(self, label);
+    self->isp = l.isp;
+}
+
+
+void vm_bt(Meta2Vm * self, char * label) {
+    const Label l = vm_lookup_label(self, label);
+    if(self->switch_flag) {
+        self->isp = l.isp;
+    }
+}
+
+
+void vm_bf(Meta2Vm * self, char * label) {
+    const Label l = vm_lookup_label(self, label);
+    if(!self->switch_flag) {
+        self->isp = l.isp;
+    }
+}
+
+void vm_be(Meta2Vm * self) {
+    if(!self->switch_flag) {
+        fatal_error("An unknown error ocurred");
+    }
+}
+
+void run_vm(Meta2Vm* out, char * input, long input_len) {
+    out->input = input;
+    out->input_len = input_len;
+    assert((long)strnlen(input, input_len) == input_len && "given input len is wrong");
+}
+
 
 int main(int argc, char** argv) {
     if(argc != 2) {
