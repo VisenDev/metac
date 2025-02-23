@@ -1,0 +1,51 @@
+.SYNTAX START
+
+
+ALPHA = 'a' .COPY(*)
+      \ 'b' .COPY(*)
+      \ 'c' .COPY(*)
+      \ 'd' .COPY(*)
+      \ 'e' .COPY(*)
+      \ 'f' .COPY(*)
+      \ 'g' .COPY(*)
+      \ 'h' .COPY(*)
+      \ 'i' .COPY(*)
+      \ 'j' .COPY(*)
+      \ 'k' .COPY(*)
+      \ 'l' .COPY(*)
+      \ 'm' .COPY(*)
+      \ 'n' .COPY(*)
+      \ 'o' .COPY(*)
+      \ 'p' .COPY(*)
+      \ 'q' .COPY(*)
+      \ 'r' .COPY(*)
+      \ 's' .COPY(*)
+      \ 't' .COPY(*)
+      \ 'u' .COPY(*)
+      \ 'v' .COPY(*)
+      \ 'w' .COPY(*)
+      \ 'x' .COPY(*)
+      \ 'y' .COPY(*)
+      \ 'z' .COPY(*).,
+
+DIGIT = '0'
+      \ '1'
+      \ '2'
+      \ '3'
+      \ '4'
+      \ '5'
+      \ '6'
+      \ '7'
+      \ '8'
+      \ '9' .,
+
+ALPHADIGIT = ALPHA
+           \ DIGIT .,
+
+SYMBOL = ALPHA $ ALPHADIGIT .,
+
+NUMBER = DIGIT $ DIGIT .,
+
+START = 
+
+.END

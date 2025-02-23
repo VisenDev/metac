@@ -1,4 +1,5 @@
 #include <stdarg.h>
+#include <signal.h>
 #include <stdio.h>
 #include <assert.h>
 #include <ctype.h>
@@ -7,6 +8,32 @@
 
 #define str_cap 16
 #define vm_cap 256
+
+void gensym(char * out, int len) {
+    static int counter = 0;
+    snprintf(out, len, "A%d", counter);
+    ++counter;
+}
+
+const char * opcode_names[] = {
+        "opcode_tst",
+        "opcode_id",
+        "opcode_num",
+        "opcode_sr",
+        "opcode_cll",
+        "opcode_r",
+        "opcode_set",
+        "opcode_b",
+        "opcode_bt",
+        "opcode_bf",
+        "opcode_be",
+        "opcode_cl",
+        "opcode_ci",
+        "opcode_gn1",
+        "opcode_gn2",
+        "opcode_lb",
+        "opcode_out",
+};
 
 typedef struct {
     enum {
@@ -27,8 +54,6 @@ typedef struct {
         opcode_gn2,
         opcode_lb,
         opcode_out,
-        opcode_adr,
-        opcode_end,
     } id;
     char str[str_cap];
 } Opcode;
@@ -54,11 +79,17 @@ typedef struct {
     char token[str_cap];
     long token_len;
     int switch_flag;
+
+    char starting_label[str_cap];
     int isp;
 
     char * input;
     long input_i;
     long input_len;
+
+    char output[str_cap];
+    int output_i;
+    int output_column;
 } Meta2Vm;
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -75,13 +106,14 @@ void fatal_error(const char * fmt, ...) {
     vfprintf(stderr, fmt, args);
     va_end(args);
     fflush(stderr);
-    exit(1);
+    abort();
 }
 
 void read_file(const char * filename, char * buf, long buflen) {
     FILE * fp = fopen(filename, "rw");
     int i = 0;
-    for(;!feof(fp) && i < buflen - 1; ++i) {
+    for(;!feof(fp); ++i) {
+        assert(i < buflen && "buffer overflow");
         buf[i] = fgetc(fp);         
     }
     fclose(fp);
@@ -98,37 +130,51 @@ char * skip_alpha_digit(char * str) {
     return str;
 }
 
-#define streql(ptr, literal) strncmp(ptr, literal, sizeof(literal) - 1) == 0
+#define streql(ptr, literal) strncmp(ptr, literal, strlen(literal)) == 0
 
-void load_line(char * line, Meta2Vm * out) {
+int load_line(char * line, Meta2Vm * out) {
     assert(line && "Line is NULL");
+    assert(strlen(line) > 0 && "empty line");
     if(line[0] == ' ' || line[0] == '\t') {
         Opcode op = {0};
+        char opstr[str_cap] = {0};
         /*opcode*/
         line = skip_whitespace(line);
 
-        if(strlen(line) == 0) return;
+        memcpy(opstr, line, strcspn(line, " \n"));
 
-        if(streql(line, "TST")) op.id = opcode_tst;
-        else if(streql(line, "ID")) op.id = opcode_id; 
-        else if(streql(line, "NUM")) op.id = opcode_num; 
-        else if(streql(line, "SR")) op.id = opcode_sr; 
-        else if(streql(line, "CLL")) op.id = opcode_cll; 
-        else if(streql(line, "R")) op.id = opcode_r; 
-        else if(streql(line, "SET")) op.id = opcode_set; 
-        else if(streql(line, "B")) op.id = opcode_b; 
-        else if(streql(line, "BT")) op.id = opcode_bt; 
-        else if(streql(line, "BF")) op.id = opcode_bf; 
-        else if(streql(line, "BE")) op.id = opcode_be; 
-        else if(streql(line, "CL")) op.id = opcode_cl; 
-        else if(streql(line, "CI")) op.id = opcode_ci; 
-        else if(streql(line, "GN1")) op.id = opcode_gn1; 
-        else if(streql(line, "GN2")) op.id = opcode_gn2; 
-        else if(streql(line, "LB")) op.id = opcode_lb; 
-        else if(streql(line, "OUT")) op.id = opcode_out; 
-        else if(streql(line, "ADR")) op.id = opcode_adr; 
-        else if(streql(line, "END")) op.id = opcode_end; 
-        else fatal_error("invalid opcode \"%s\"\n", line);
+        if(streql(opstr, "ADR")) {
+            line = skip_alpha_digit(line);
+            line = skip_whitespace(line);
+            memcpy(out->starting_label, line, strnlen(line, str_cap));
+            return 1;
+        }
+
+
+        if(streql(opstr, "TST")) op.id = opcode_tst;
+        else if(streql(opstr, "ID")) op.id = opcode_id; 
+        else if(streql(opstr, "NUM")) op.id = opcode_num; 
+        else if(streql(opstr, "SR")) op.id = opcode_sr; 
+        else if(streql(opstr, "CLL")) op.id = opcode_cll; 
+        else if(streql(opstr, "R")) op.id = opcode_r; 
+        else if(streql(opstr, "SET")) op.id = opcode_set; 
+        else if(streql(opstr, "BT")) op.id = opcode_bt; 
+        else if(streql(opstr, "BF")) op.id = opcode_bf; 
+        else if(streql(opstr, "BE")) op.id = opcode_be; 
+        else if(streql(opstr, "B")) op.id = opcode_b; 
+        else if(streql(opstr, "CL")) op.id = opcode_cl; 
+        else if(streql(opstr, "CI")) op.id = opcode_ci; 
+        else if(streql(opstr, "GN1")) op.id = opcode_gn1; 
+        else if(streql(opstr, "GN2")) op.id = opcode_gn2; 
+        else if(streql(opstr, "LB")) op.id = opcode_lb; 
+        else if(streql(opstr, "OUT")) op.id = opcode_out; 
+        else if(streql(opstr, "END")) {
+            printf("END REACHED\n");
+            return 0;
+        }
+        else fatal_error("invalid opcode \"%s\"\n", opstr);
+
+        printf("Parsed \"%s\" into %s\n", opstr, opcode_names[op.id]);
 
         line = skip_alpha_digit(line);
         line = skip_whitespace(line);
@@ -156,20 +202,26 @@ void load_line(char * line, Meta2Vm * out) {
         out->opcodes[out->opcode_len] = op;
         ++out->opcode_len;
     } else {
+        /*printf("Found label: %s\n", line);*/
         /*label*/
         memcpy(out->labels[out->labels_len].str, line, strlen(line));
         out->labels[out->labels_len].isp = out->opcode_len;
         ++out->labels_len;
+        if(strncmp(out->starting_label, line, strlen(line)) == 0) {
+            printf("STARTING LABEL FOUND\n");
+            out->isp = out->opcode_len;
+        }
     }
+    return 1;
 }
 
 void load_vm(char * input, Meta2Vm * out) {
     memset(out, 0, sizeof(Meta2Vm));
     char * line = strtok(input, "\n");
 
-    for(;line != NULL; line = strtok(NULL, "\n")) {
-        load_line(line, out); 
+    for(;line != NULL && load_line(line, out); line = strtok(NULL, "\n")) {
     }
+    out->stack_len = 1;
 }
 
 /*vm utilities*/
@@ -210,7 +262,7 @@ char vm_peekch(Meta2Vm * self) {
     return vm_input(self)[0];
 }
 
-Label vm_lookup_label(Meta2Vm * self, char * name) {
+Label vm_lookup_label(Meta2Vm * self, const char * name) {
     int i = 0;
     assert(name);
     assert(self);
@@ -225,7 +277,7 @@ Label vm_lookup_label(Meta2Vm * self, char * name) {
 
 
 /*opcode implementations*/
-void vm_tst(Meta2Vm* self, char * str) {
+void vm_tst(Meta2Vm* self, const char * str) {
     assert(self);
     assert(str && "tst string is NULL");
     assert(strlen(str) > 0 && "empty string given as arg");
@@ -313,7 +365,7 @@ void vm_sr(Meta2Vm * self) {
 
 #define ARRAY_LEN(arr) (long)(sizeof(arr) / sizeof(arr[0]))
 
-void vm_cll(Meta2Vm* self, char * subroutine_name) {
+void vm_cll(Meta2Vm* self, const char * subroutine_name) {
     const Label l = vm_lookup_label(self, subroutine_name);
     if(self->stack_len >= ARRAY_LEN(self->stack)) {
         fatal_error("Stack overflow");
@@ -324,7 +376,6 @@ void vm_cll(Meta2Vm* self, char * subroutine_name) {
     self->stack_len += 1;
     self->isp = l.isp;
 }
-
 
 void vm_r(Meta2Vm * self) {
     assert(self);
@@ -342,13 +393,13 @@ void vm_set(Meta2Vm * self) {
     self->switch_flag = 1;
 }
 
-void vm_b(Meta2Vm * self, char * label) {
+void vm_b(Meta2Vm * self, const char * label) {
     const Label l = vm_lookup_label(self, label);
     self->isp = l.isp;
 }
 
 
-void vm_bt(Meta2Vm * self, char * label) {
+void vm_bt(Meta2Vm * self, const char * label) {
     const Label l = vm_lookup_label(self, label);
     if(self->switch_flag) {
         self->isp = l.isp;
@@ -356,7 +407,7 @@ void vm_bt(Meta2Vm * self, char * label) {
 }
 
 
-void vm_bf(Meta2Vm * self, char * label) {
+void vm_bf(Meta2Vm * self, const char * label) {
     const Label l = vm_lookup_label(self, label);
     if(!self->switch_flag) {
         self->isp = l.isp;
@@ -369,30 +420,103 @@ void vm_be(Meta2Vm * self) {
     }
 }
 
-void run_vm(Meta2Vm* out, char * input, long input_len) {
-    out->input = input;
-    out->input_len = input_len;
+void vm_ci(Meta2Vm* self) {
+    memcpy(&(self->output[self->output_i]), self->token, strlen(self->token));
+    memset(self->token, 0, sizeof(self->token));
+}
+
+void vm_cl(Meta2Vm * self, const char * literal) {
+    const long len = strnlen(literal, str_cap - 1);
+    memcpy(&(self->output[self->output_i]), literal, len + 1);
+    self->output_i = len;
+    self->output[len] = 0;
+}
+
+void vm_gn1(Meta2Vm * self) {
+    assert(self->stack_len > 0);
+    {
+        StackCell * top = &self->stack[self->stack_len - 1];
+        if(top->label1[0] == 0) {
+            gensym(top->label1, sizeof(top->label1));
+        } 
+        printf("%s\n", top->label1);
+    }
+}
+
+
+void vm_gn2(Meta2Vm * self) {
+    assert(self->stack_len > 0);
+    {
+        StackCell * top = &self->stack[self->stack_len - 1];
+        if(top->label2[0] == 0) {
+            gensym(top->label2, sizeof(top->label2));
+        } 
+        printf("%s\n", top->label2);
+    }
+}
+
+void vm_lb(Meta2Vm * self) {
+    self->output_column = 0;
+}
+
+void vm_out(Meta2Vm * self) {
+    int i = 0;
+    for(i = 0; i < self->output_column; ++i) {
+        printf(" ");
+    }
+    printf("%s\n", self->output);
+    memset(self->output, 0, sizeof(self->output));
+}
+
+void run_vm(Meta2Vm* self, char * input, long input_len) {
+    self->input = input;
+    self->input_len = input_len;
     assert((long)strnlen(input, input_len) == input_len && "given input len is wrong");
+    
+    while(self->input_i < self->input_len) {
+        const Opcode op = self->opcodes[self->isp];
+        printf("Running: %s %s\n", opcode_names[op.id], op.str);
+        ++self->isp;
+        switch(op.id) {
+            case opcode_tst: vm_tst(self, op.str); break;
+            case opcode_id: vm_id(self); break;
+            case opcode_num: vm_num(self); break;
+            case opcode_sr: vm_sr(self); break;
+            case opcode_cll: vm_cll(self, op.str); break;
+            case opcode_r: vm_r(self); break;
+            case opcode_set: vm_set(self); break;
+            case opcode_b: vm_b(self, op.str); break;
+            case opcode_bt: vm_bt(self, op.str); break;
+            case opcode_bf: vm_bf(self, op.str); break;
+            case opcode_be: vm_be(self); break;
+            case opcode_cl: vm_cl(self, op.str); break;
+            case opcode_ci: vm_ci(self); break;
+            case opcode_gn1: vm_gn1(self); break;
+            case opcode_gn2: vm_gn2(self); break;
+            case opcode_lb: vm_lb(self); break;
+            case opcode_out: vm_out(self); break;
+            default:
+                /*invalid opcode*/
+                abort();
+        }
+    }
 }
 
 
 int main(int argc, char** argv) {
-    if(argc != 2) {
-        fatal_error("Expected 1 cli argument, found %d\n", argc - 1); 
+    if(argc != 3) {
+        fatal_error("Expected 2 cli argument, found %d\n", argc - 1); 
     } else {
-        char * filename = argv[1];
-        char buf[2048] = {0};
-        read_file(filename, buf, sizeof(buf));
+        char * code_file= argv[1];
+        char * input_file = argv[2];
+        char code[9000] = {0};
+        char input[9000] = {0};
+        read_file(code_file, code, sizeof(code));
+        read_file(input_file, input, sizeof(input));
         Meta2Vm vm = {0};
-        int i = 0;
 
-        load_vm(buf, &vm);
-
-        i = 100;
-        i = 1002;
-        (void)i;
-
-
+        load_vm(code, &vm);
+        run_vm(&vm, input, strnlen(input, sizeof(input)));
     }
     return 0;
 }
