@@ -5,13 +5,18 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #define str_cap 16
 #define vm_cap 256
 
 void gensym(char * out, int len) {
     static int counter = 0;
+    assert(out != NULL);
     snprintf(out, len, "A%d", counter);
+    if(counter == INT_MAX) {
+        counter = 0;
+    }
     ++counter;
 }
 
@@ -99,25 +104,31 @@ typedef struct {
 #endif
 
 NORETURN
-void fatal_error(const char * fmt, ...) {
-    fprintf(stderr, "Error: ");
+void fatal_error(const char * const fmt, ...) {
+    printf("Error: ");
     va_list args;
     va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
+    vprintf(fmt, args);
     va_end(args);
-    fflush(stderr);
     abort();
 }
 
 void read_file(const char * filename, char * buf, long buflen) {
-    FILE * fp = fopen(filename, "rw");
-    int i = 0;
-    for(;!feof(fp); ++i) {
-        assert(i < buflen && "buffer overflow");
-        buf[i] = fgetc(fp);         
+    assert(filename != NULL);
+    assert(buf != NULL);
+    {
+        FILE * fp = fopen(filename, "r");
+        int i = 0;
+        for(;!feof(fp); ++i) {
+            assert(i < buflen && "buffer overflow");
+            buf[i] = fgetc(fp);         
+            if(i == INT_MAX) {
+                i = 0;
+            }
+        }
+        fclose(fp);
+        buf[i] = 0;
     }
-    fclose(fp);
-    buf[i] = 0;
 }
 
 char * skip_whitespace(char * str) {
@@ -130,23 +141,23 @@ char * skip_alpha_digit(char * str) {
     return str;
 }
 
-#define streql(ptr, literal) strncmp(ptr, literal, strlen(literal)) == 0
+#define streql(ptr, literal) strncmp(ptr, literal, strnlen(literal, str_cap)) == 0
 
 int load_line(char * line, Meta2Vm * out) {
     assert(line && "Line is NULL");
-    assert(strlen(line) > 0 && "empty line");
+    assert(strnlen(line, str_cap) > 0 && "empty line");
     if(line[0] == ' ' || line[0] == '\t') {
         Opcode op = {0};
         char opstr[str_cap] = {0};
         /*opcode*/
         line = skip_whitespace(line);
 
-        memcpy(opstr, line, strcspn(line, " \n"));
+        memmove(opstr, line, strcspn(line, " \n"));
 
         if(streql(opstr, "ADR")) {
             line = skip_alpha_digit(line);
             line = skip_whitespace(line);
-            memcpy(out->starting_label, line, strnlen(line, str_cap));
+            memmove(out->starting_label, line, strnlen(line, str_cap));
             return 1;
         }
 
@@ -180,14 +191,14 @@ int load_line(char * line, Meta2Vm * out) {
         line = skip_whitespace(line);
         {
             /*Remove trailing whitespace*/
-            const long len = strlen(line);
+            const long len = strnlen(line, str_cap);
             if(len > 0 && line[len - 1] == ' ') {
-                line[strlen(line) - 1] = 0;
+                line[strnlen(line, str_cap) - 1] = 0;
             }
         }
         {
             /*Remove quotes around string arguments*/
-            const long len = strlen(line);
+            const long len = strnlen(line, str_cap);
             if(len > 0 && line[len - 1] == '\'') {
                 line[len - 1] = 0;
             }
@@ -197,17 +208,17 @@ int load_line(char * line, Meta2Vm * out) {
 
         }
 
-        memcpy(op.str, line, strlen(line));
+        memmove(op.str, line, strnlen(line, str_cap));
 
         out->opcodes[out->opcode_len] = op;
         ++out->opcode_len;
     } else {
         /*printf("Found label: %s\n", line);*/
         /*label*/
-        memcpy(out->labels[out->labels_len].str, line, strlen(line));
+        memmove(out->labels[out->labels_len].str, line, strnlen(line, str_cap));
         out->labels[out->labels_len].isp = out->opcode_len;
         ++out->labels_len;
-        if(strncmp(out->starting_label, line, strlen(line)) == 0) {
+        if(strncmp(out->starting_label, line, strnlen(line, str_cap)) == 0) {
             printf("STARTING LABEL FOUND\n");
             out->isp = out->opcode_len;
         }
@@ -280,10 +291,10 @@ Label vm_lookup_label(Meta2Vm * self, const char * name) {
 void vm_tst(Meta2Vm* self, const char * str) {
     assert(self);
     assert(str && "tst string is NULL");
-    assert(strlen(str) > 0 && "empty string given as arg");
-    assert(strcspn(str, "'") == strlen(str) && "tst string must not contain single quotes");
+    assert(strnlen(str, str_cap) > 0 && "empty string given as arg");
+    assert(strcspn(str, "'") == strnlen(str, str_cap) && "tst string must not contain single quotes");
     {
-        const long len = strlen(str);
+        const long len = strnlen(str, str_cap);
         vm_skip_whitespace(self);
         if(strncmp(str, vm_input(self), len) == 0) {
             self->switch_flag = 1;
@@ -414,20 +425,20 @@ void vm_bf(Meta2Vm * self, const char * label) {
     }
 }
 
-void vm_be(Meta2Vm * self) {
+void vm_be(const Meta2Vm * self) {
     if(!self->switch_flag) {
         fatal_error("An unknown error ocurred");
     }
 }
 
 void vm_ci(Meta2Vm* self) {
-    memcpy(&(self->output[self->output_i]), self->token, strlen(self->token));
+    memmove(&(self->output[self->output_i]), self->token, strnlen(self->token, str_cap));
     memset(self->token, 0, sizeof(self->token));
 }
 
 void vm_cl(Meta2Vm * self, const char * literal) {
     const long len = strnlen(literal, str_cap - 1);
-    memcpy(&(self->output[self->output_i]), literal, len + 1);
+    memmove(&(self->output[self->output_i]), literal, len + 1);
     self->output_i = len;
     self->output[len] = 0;
 }
@@ -507,8 +518,8 @@ int main(int argc, char** argv) {
     if(argc != 3) {
         fatal_error("Expected 2 cli argument, found %d\n", argc - 1); 
     } else {
-        char * code_file= argv[1];
-        char * input_file = argv[2];
+        const char * code_file= argv[1];
+        const char * input_file = argv[2];
         char code[9000] = {0};
         char input[9000] = {0};
         read_file(code_file, code, sizeof(code));
